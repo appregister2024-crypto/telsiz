@@ -1,0 +1,1322 @@
+<html lang="tr" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>LAN Talk — Yerel Ağ Telsiz (Push-to-Talk)</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            tactical: {
+              900: '#0a0d14',
+              800: '#121722',
+              700: '#1a2232',
+              600: '#26334a',
+              accent: '#10b981',
+              warning: '#f59e0b',
+              danger: '#ef4444',
+              navy: '#0f172a'
+            }
+          },
+          animation: {
+            'pulse-fast': 'pulse 1s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+            'ping-slow': 'ping 2s cubic-bezier(0, 0, 0.2, 1) infinite',
+          }
+        }
+      }
+    }
+  </script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    /* Prevent text selection and iOS rubber-banding when pressing PTT */
+    .no-select {
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    
+    /* CRT Scanline & Tactical Grid aesthetic */
+    .tactical-grid {
+      background-size: 32px 32px;
+      background-image: 
+        linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+    }
+
+    /* Outer glowing pulse for PTT active state */
+    .ptt-glow-active {
+      box-shadow: 0 0 50px rgba(239, 68, 68, 0.5), inset 0 0 25px rgba(239, 68, 68, 0.4);
+    }
+    .ptt-glow-ready {
+      box-shadow: 0 0 35px rgba(16, 185, 129, 0.25), inset 0 0 20px rgba(16, 185, 129, 0.2);
+    }
+    .ptt-glow-busy {
+      box-shadow: 0 0 35px rgba(245, 158, 11, 0.3), inset 0 0 20px rgba(245, 158, 11, 0.25);
+    }
+
+    /* Scrollbar styling */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #0a0d14;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #26334a;
+      border-radius: 3px;
+    }
+  </style>
+</head>
+<body class="bg-tactical-900 text-slate-100 font-sans tactical-grid min-h-screen flex flex-col justify-between no-select overflow-x-hidden">
+
+  <!-- ================= TOP NAVIGATION BAR ================= -->
+  <header class="border-b border-tactical-700/60 bg-tactical-800/80 backdrop-blur-md px-4 py-3 sticky top-0 z-40">
+    <div class="max-w-4xl mx-auto flex items-center justify-between">
+      <!-- App Brand -->
+      <div class="flex items-center space-x-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-400 flex items-center justify-center shadow-lg shadow-emerald-500/20 border border-emerald-400/30">
+          <i data-lucide="radio" class="w-6 h-6 text-white animate-pulse"></i>
+        </div>
+        <div>
+          <div class="flex items-center space-x-2">
+            <h1 class="font-black text-lg tracking-wider text-white">LAN<span class="text-emerald-400">TALK</span></h1>
+            <span class="text-[10px] uppercase font-bold tracking-widest px-1.5 py-0.5 rounded bg-emerald-950/80 text-emerald-400 border border-emerald-500/30">v1.2 MVP</span>
+          </div>
+          <p class="text-xs text-slate-400 flex items-center gap-1.5">
+            <span id="network-dot" class="inline-block w-2 h-2 rounded-full bg-emerald-400"></span>
+            <span id="network-status-text">Yerel Ağ Modu (P2P + Mesh)</span>
+          </p>
+        </div>
+      </div>
+
+      <!-- Action Buttons -->
+      <div class="flex items-center space-x-2">
+        <button id="server-guide-btn" class="p-2 rounded-lg bg-tactical-700 hover:bg-tactical-600 text-slate-300 hover:text-white transition text-xs font-medium flex items-center gap-1.5 border border-tactical-600/40">
+          <i data-lucide="terminal" class="w-4 h-4 text-emerald-400"></i>
+          <span class="hidden sm:inline">Sunucu & Kurulum</span>
+        </button>
+        <button id="leave-room-btn" class="p-2 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 transition text-xs font-medium hidden flex items-center gap-1.5">
+          <i data-lucide="log-out" class="w-4 h-4"></i>
+          <span class="hidden sm:inline">Ayrıl</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- ================= MAIN CONTAINER ================= -->
+  <main class="max-w-4xl w-full mx-auto p-4 flex-1 flex flex-col justify-center">
+
+    <!-- VIEW 1: JOIN / CREATE ROOM VIEW -->
+    <div id="join-card" class="bg-tactical-800/90 border border-tactical-700/80 rounded-2xl p-6 sm:p-8 shadow-2xl backdrop-blur-sm max-w-md mx-auto w-full transition-all duration-300">
+      <div class="text-center mb-6">
+        <div class="inline-flex p-3 rounded-full bg-emerald-500/10 text-emerald-400 mb-3 border border-emerald-500/20">
+          <i data-lucide="shield-alert" class="w-7 h-7"></i>
+        </div>
+        <h2 class="text-xl font-bold text-white tracking-wide">Telsiz Frekansına Bağlan</h2>
+        <p class="text-xs text-slate-400 mt-1">İnternet gerektirmez. Aynı Wi-Fi ağındaki cihazlar otomatik bağlanır.</p>
+      </div>
+
+      <div class="space-y-4">
+        <div>
+          <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">Çağrı Kodu / Kullanıcı Adı</label>
+          <div class="relative">
+            <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
+              <i data-lucide="user" class="w-4 h-4"></i>
+            </span>
+            <input type="text" id="username-input" maxlength="20" placeholder="Örn: Komuta-1" value="Kullanıcı-1" class="w-full pl-9 pr-3 py-2.5 bg-tactical-900 border border-tactical-600/70 rounded-xl text-sm focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 text-white placeholder-slate-500 font-medium transition" />
+          </div>
+        </div>
+
+        <div>
+          <div class="flex justify-between items-center mb-1.5">
+            <label class="block text-xs font-semibold uppercase tracking-wider text-slate-400">Oda Kodu (Kanal)</label>
+            <button id="quick-gen-btn" class="text-[11px] text-emerald-400 hover:text-emerald-300 font-medium">Yeni Kod Üret</button>
+          </div>
+          <div class="relative">
+            <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
+              <i data-lucide="hash" class="w-4 h-4"></i>
+            </span>
+            <input type="text" id="room-input" maxlength="12" placeholder="Örn: FREKANS-1" value="KANAL-7" class="w-full pl-9 pr-3 py-2.5 bg-tactical-900 border border-tactical-600/70 rounded-xl text-sm focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 text-white uppercase tracking-wider font-mono transition" />
+          </div>
+        </div>
+
+        <button id="btn-connect" class="w-full mt-2 py-3.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold rounded-xl shadow-lg shadow-emerald-700/20 border border-emerald-400/30 flex items-center justify-center gap-2 transition active:scale-[0.99]">
+          <i data-lucide="mic" class="w-5 h-5"></i>
+          <span>Frekansa Katıl (Mikrofonu Aç)</span>
+        </button>
+
+        <div class="bg-tactical-900/80 rounded-xl p-3 border border-tactical-700/60 text-[11px] text-slate-400 space-y-1">
+          <p class="flex items-center gap-1.5 text-emerald-400 font-medium">
+            <i data-lucide="info" class="w-3.5 h-3.5 flex-shrink-0"></i>
+            <span>Çoklu Cihaz / Sekme Desteği</span>
+          </p>
+          <p>Bu sayfayı yan sekmede veya aynı Wi-Fi'daki telefonda açtığınızda otomatik olarak birbirine bağlanıp canlı ses aktaracaktır.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- VIEW 2: ACTIVE PUSH-TO-TALK TALKIE VIEW (Hidden initially) -->
+    <div id="talkie-card" class="hidden flex-col items-center justify-center space-y-6 max-w-xl mx-auto w-full">
+
+      <!-- Frequency & Room Header Badge -->
+      <div class="w-full bg-tactical-800/90 border border-tactical-700 rounded-2xl p-4 shadow-xl flex flex-wrap items-center justify-between gap-3">
+        <div class="flex items-center gap-3">
+          <div class="w-3 h-3 rounded-full bg-emerald-400 animate-ping"></div>
+          <div>
+            <div class="flex items-center gap-2">
+              <span class="text-xs font-semibold uppercase text-slate-400 tracking-wider">AKTİF KANAL:</span>
+              <span id="active-channel-tag" class="font-mono font-bold text-emerald-400 bg-emerald-950/60 px-2.5 py-0.5 rounded border border-emerald-500/30 text-sm">KANAL-7</span>
+              <button id="copy-room-btn" title="Kanal Kodunu Kopyala" class="text-slate-400 hover:text-white transition">
+                <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+              </button>
+            </div>
+            <div class="text-[11px] text-slate-400 flex items-center gap-2 mt-0.5">
+              <span>Kimliğiniz: <b id="display-username" class="text-white">Komuta-1</b></span>
+              <span>•</span>
+              <span id="active-user-count" class="text-emerald-400 font-bold">1 Katılımcı</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Squelch / Roger Beep status indicator -->
+        <div class="flex items-center gap-2 bg-tactical-900/90 px-3 py-1.5 rounded-xl border border-tactical-700/60">
+          <div id="radio-signal-icon" class="text-emerald-400 flex items-center">
+            <i data-lucide="wifi" class="w-4 h-4"></i>
+          </div>
+          <span id="radio-mode-label" class="text-[11px] font-mono uppercase font-bold text-slate-300">STANDBY</span>
+        </div>
+      </div>
+
+      <!-- Transmission State Monitor Screen -->
+      <div class="w-full bg-black/60 border border-tactical-700 rounded-2xl p-5 shadow-2xl relative overflow-hidden flex flex-col items-center justify-center min-h-[140px]">
+        
+        <!-- Oscilloscope / VU canvas -->
+        <canvas id="audio-visualizer" class="absolute inset-0 w-full h-full opacity-35 pointer-events-none" width="400" height="140"></canvas>
+        
+        <!-- Live speaker indicator badge -->
+        <div id="speaker-status-box" class="z-10 text-center transition-all duration-200">
+          <div id="speaker-icon-wrap" class="w-12 h-12 rounded-full mx-auto mb-2 flex items-center justify-center bg-tactical-800 text-slate-400 border border-tactical-600 transition-colors">
+            <i data-lucide="radio" id="speaker-icon" class="w-6 h-6"></i>
+          </div>
+          <h3 id="transmission-title" class="text-sm font-black tracking-widest uppercase text-slate-300">FREKANS SAKİN</h3>
+          <p id="transmission-subtitle" class="text-xs text-slate-500 font-mono mt-0.5">Konuşmak için butona basılı tutun</p>
+        </div>
+
+        <!-- Transmission countdown indicator (safety timeout 15s) -->
+        <div id="ptt-timeout-bar-wrap" class="absolute bottom-0 left-0 right-0 h-1 bg-tactical-800 opacity-0 transition-opacity">
+          <div id="ptt-timeout-bar" class="h-full bg-rose-500 w-full transition-all ease-linear"></div>
+        </div>
+      </div>
+
+      <!-- ================= PUSH-TO-TALK BUTTON ================= -->
+      <div class="relative py-2 flex flex-col items-center">
+        <!-- Ripple effect wrapper -->
+        <div id="ptt-ripple" class="absolute inset-0 rounded-full bg-rose-500/20 blur-xl scale-95 opacity-0 transition-all duration-300 pointer-events-none"></div>
+
+        <button 
+          id="ptt-button"
+          class="relative w-56 h-56 sm:w-64 sm:h-64 rounded-full bg-gradient-to-b from-tactical-700 to-tactical-800 border-4 border-tactical-600 ptt-glow-ready transition-all duration-150 flex flex-col items-center justify-center text-white active:scale-95 cursor-pointer shadow-2xl focus:outline-none select-none touch-none"
+        >
+          <!-- Outer grooved ring effect -->
+          <div class="absolute inset-2 rounded-full border border-tactical-500/20 pointer-events-none"></div>
+          <div class="absolute inset-4 rounded-full border-2 border-dashed border-tactical-500/20 pointer-events-none"></div>
+
+          <!-- Center Icon & Text -->
+          <div class="flex flex-col items-center justify-center space-y-2 pointer-events-none z-10">
+            <div id="ptt-mic-icon-bg" class="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-tactical-900/90 border border-tactical-600 flex items-center justify-center shadow-inner transition-colors">
+              <i data-lucide="mic" id="ptt-mic-icon" class="w-8 h-8 sm:w-10 sm:h-10 text-emerald-400 transition-transform"></i>
+            </div>
+            
+            <div class="text-center px-4">
+              <span id="ptt-main-label" class="block font-black text-sm sm:text-base tracking-widest uppercase text-slate-100">BAS-KONUŞ</span>
+              <span id="ptt-sub-label" class="block text-[10px] sm:text-xs text-slate-400 uppercase font-mono mt-0.5">Basılı Tutun</span>
+            </div>
+          </div>
+        </button>
+
+        <!-- Shortcut instruction -->
+        <div class="mt-4 flex items-center gap-2 text-xs text-slate-400 bg-tactical-800/80 px-3.5 py-1.5 rounded-full border border-tactical-700/60 shadow">
+          <kbd class="px-2 py-0.5 rounded bg-tactical-900 text-emerald-400 font-mono font-bold text-[11px] border border-tactical-600">SPACE</kbd>
+          <span>tuşu ile bas-konuş yapabilirsiniz</span>
+        </div>
+      </div>
+
+      <!-- ================= PARTICIPANTS / ROSTER LIST ================= -->
+      <div class="w-full bg-tactical-800/80 border border-tactical-700 rounded-2xl p-4 shadow-xl">
+        <div class="flex items-center justify-between mb-3 border-b border-tactical-700/60 pb-2">
+          <h4 class="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+            <i data-lucide="users" class="w-4 h-4 text-emerald-400"></i>
+            <span>Frekans Katılımcıları</span>
+          </h4>
+          <span class="text-[11px] font-mono text-slate-400" id="peer-count-badge">1 Cihaz Çevrimiçi</span>
+        </div>
+
+        <div id="participants-list" class="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto pr-1">
+          <!-- Dynamic Peer Cards Injected Here -->
+        </div>
+      </div>
+
+    </div>
+
+  </main>
+
+  <!-- ================= FOOTER ================= -->
+  <footer class="border-t border-tactical-700/40 bg-tactical-900/80 px-4 py-2.5 text-center text-xs text-slate-500">
+    <div class="max-w-4xl mx-auto flex flex-wrap items-center justify-between gap-2">
+      <div class="flex items-center gap-2">
+        <span class="inline-block w-2 h-2 rounded-full bg-emerald-500"></span>
+        <span class="font-mono text-[11px]">WebRTC Peer-to-Peer Audio • Squelch & Roger-Beep Simülasyonu</span>
+      </div>
+      <div class="text-[11px] text-slate-400">
+        LAN Walkie-Talkie Architecture
+      </div>
+    </div>
+  </footer>
+
+  <!-- ================= SERVER ARCHITECTURE & DEPLOYMENT MODAL ================= -->
+  <div id="guide-modal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-md hidden items-center justify-center p-4 overflow-y-auto">
+    <div class="bg-tactical-800 border border-tactical-600 max-w-3xl w-full rounded-2xl shadow-2xl overflow-hidden my-8">
+      <!-- Modal Header -->
+      <div class="border-b border-tactical-700 px-6 py-4 flex items-center justify-between bg-tactical-900/50">
+        <div class="flex items-center gap-2.5">
+          <i data-lucide="server" class="w-5 h-5 text-emerald-400"></i>
+          <h3 class="font-bold text-white text-base">Node.js + Socket.IO Sunucu Kurulumu & Yerel Ağ HTTPS</h3>
+        </div>
+        <button id="close-guide-btn" class="text-slate-400 hover:text-white p-1 rounded-lg">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <!-- Modal Body -->
+      <div class="p-6 space-y-6 text-xs text-slate-300 max-h-[75vh] overflow-y-auto">
+
+        <!-- Notice -->
+        <div class="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300">
+          <p class="font-semibold mb-1">🔥 Bu Sayfada Anında Test Edebilirsiniz!</p>
+          <p>Şu anda çalışan bu arayüz, tarayıcılar arası <strong>BroadcastChannel</strong> ve <strong>Web Audio API</strong> ile aynı makinedeki birden çok sekmede gerçek iki telsiz gibi anında çalışır. Telefon ve bilgisayarlar arasında çalıştırmak için aşağıdaki Node.js sunucu kodunu çalıştırabilirsiniz.</p>
+        </div>
+
+        <!-- Section 1: Finding LAN IP -->
+        <div class="space-y-2">
+          <h4 class="font-bold text-white text-sm flex items-center gap-2">
+            <span class="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-xs">1</span>
+            Sunucu Bilgisayarın Yerel IP Adresini Bulma
+          </h4>
+          <p>Telsiz sunucusunu çalıştıracağınız ana bilgisayarda terminali açın:</p>
+          <div class="bg-tactical-900 p-3 rounded-lg font-mono text-emerald-400 border border-tactical-700 select-all">
+            # Windows için:<br/>
+            ipconfig<br/>
+            # IPv4 Address kısmını bulun (Örn: 192.168.1.50)<br/><br/>
+            # macOS / Linux için:<br/>
+            ifconfig | grep "inet " | grep -v 127.0.0.1<br/>
+            # veya: ip a
+          </div>
+        </div>
+
+        <!-- Section 2: HTTPS & Microphone Security Requirement -->
+        <div class="space-y-2">
+          <h4 class="font-bold text-white text-sm flex items-center gap-2">
+            <span class="w-5 h-5 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center text-xs">2</span>
+            Telefonda Mikrofon Erişimi İçin HTTPS Zorunluluğu
+          </h4>
+          <p>Mobil Chrome ve Safari, güvenli olmayan HTTP üzerinden mikrofon izni vermez (yalnızca `localhost` hariç). Yerel IP'de (`192.168.x.x`) mikrofonu açmak için <strong>mkcert</strong> ile 1 dakikada yerel SSL sertifikası üretilir:</p>
+          <div class="bg-tactical-900 p-3 rounded-lg font-mono text-slate-300 border border-tactical-700 select-all">
+            npm install -g mkcert<br/>
+            mkcert create-ca<br/>
+            mkcert create-cert --domains "localhost,192.168.1.50"<br/>
+            # Oluşan cert.crt ve cert.key dosyalarını server klasörüne koyun.
+          </div>
+        </div>
+
+        <!-- Section 3: Server Implementation Code -->
+        <div class="space-y-2">
+          <h4 class="font-bold text-white text-sm flex items-center gap-2">
+            <span class="w-5 h-5 rounded-full bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-xs">3</span>
+            Üretim Hazır Node.js + Socket.IO Sunucu Kodu (`server.js`)
+          </h4>
+          <p>Aynı anda yalnızca tek bir kullanıcının konuşmasını garantileyen sunucu kilit mekanizması ve sinyalizasyon:</p>
+          <pre class="bg-tactical-900 p-4 rounded-lg font-mono text-emerald-300 border border-tactical-700 overflow-x-auto text-[11px] leading-relaxed">
+const express = require('express');
+const https = require('https');
+const fs = require('fs');
+const { Server } = require('socket.io');
+
+const app = express();
+app.use(express.static('public'));
+
+// HTTPS Sertifikaları (Yerel Ağda mobil mikrofon erişimi için)
+const server = https.createServer({
+  key: fs.readFileSync('./cert.key'),
+  cert: fs.readFileSync('./cert.crt')
+}, app);
+
+const io = new Server(server, { cors: { origin: '*' } });
+
+// Odalar ve aktif konuşma kilitleri
+const rooms = new Map(); // roomId -> { currentSpeaker: socketId, timer: NodeJS.Timeout, members: Map }
+
+io.on('connection', (socket) => {
+  let userRoom = null;
+  let userName = 'Bilinmeyen';
+
+  socket.on('join_room', ({ roomId, username }) => {
+    userRoom = roomId;
+    userName = username;
+    socket.join(roomId);
+
+    if (!rooms.has(roomId)) {
+      rooms.set(roomId, { currentSpeaker: null, speakerTimeout: null, members: new Map() });
+    }
+    const room = rooms.get(roomId);
+    room.members.set(socket.id, username);
+
+    // Bildirim gönder
+    io.to(roomId).emit('room_roster', {
+      members: Array.from(room.members.entries()).map(([id, name]) => ({ id, name })),
+      currentSpeaker: room.currentSpeaker
+    });
+  });
+
+  // Bas-Konuş Kilidi Talep Etme
+  socket.on('request_floor', () => {
+    if (!userRoom || !rooms.has(userRoom)) return;
+    const room = rooms.get(userRoom);
+
+    // Kilit boş mu kontrol et
+    if (room.currentSpeaker === null) {
+      room.currentSpeaker = socket.id;
+      
+      // 15 saniye güvenlik kilidi zaman aşımı (takılı kalan mikrofon önlemi)
+      room.speakerTimeout = setTimeout(() => {
+        releaseFloor(userRoom, socket.id);
+      }, 15000);
+
+      io.to(userRoom).emit('floor_granted', { speakerId: socket.id, speakerName: userName });
+    } else {
+      socket.emit('floor_denied', { reason: 'Kanal meşgul' });
+    }
+  });
+
+  // Buton bırakıldığında kilidi çöz
+  socket.on('release_floor', () => {
+    if (!userRoom) return;
+    releaseFloor(userRoom, socket.id);
+  });
+
+  // WebRTC Sinyalizasyon İletimi (P2P Mesh)
+  socket.on('signal', ({ targetId, data }) => {
+    io.to(targetId).emit('signal', { senderId: socket.id, data });
+  });
+
+  socket.on('disconnect', () => {
+    if (userRoom && rooms.has(userRoom)) {
+      const room = rooms.get(userRoom);
+      room.members.delete(socket.id);
+      if (room.currentSpeaker === socket.id) {
+        releaseFloor(userRoom, socket.id);
+      }
+      io.to(userRoom).emit('room_roster', {
+        members: Array.from(room.members.entries()).map(([id, name]) => ({ id, name })),
+        currentSpeaker: room.currentSpeaker
+      });
+      if (room.members.size === 0) rooms.delete(userRoom);
+    }
+  });
+
+  function releaseFloor(roomId, requesterId) {
+    const room = rooms.get(roomId);
+    if (!room || room.currentSpeaker !== requesterId) return;
+    clearTimeout(room.speakerTimeout);
+    room.currentSpeaker = null;
+    io.to(roomId).emit('floor_released');
+  }
+});
+
+const PORT = 3000;
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`📡 Telsiz Sunucusu Hazır: https://0.0.0.0:${PORT}`);
+});</pre>
+        </div>
+
+        <!-- Section 4: Firewall / Troubleshooting -->
+        <div class="space-y-2">
+          <h4 class="font-bold text-white text-sm flex items-center gap-2">
+            <span class="w-5 h-5 rounded-full bg-rose-500/20 text-rose-400 flex items-center justify-center text-xs">4</span>
+            Güvenlik Duvarı & Sorun Giderme
+          </h4>
+          <ul class="list-disc pl-5 space-y-1 text-slate-400">
+            <li><strong>Port İzni:</strong> Sunucu makinenin güvenlik duvarında 3000 portuna (TCP) ve WebRTC için UDP trafiğine izin verin.</li>
+            <li><strong>AP İzolasyonu (İstemci İzolasyonu):</strong> Bazı otel veya misafir Wi-Fi yönlendiricilerinde "Client Isolation" açıktır. Cihazlar birbirini göremezse ev/ofis normal Wi-Fi ağına bağlanın.</li>
+          </ul>
+        </div>
+
+      </div>
+
+      <!-- Modal Footer -->
+      <div class="border-t border-tactical-700 px-6 py-3 bg-tactical-900/40 flex justify-end">
+        <button id="modal-ok-btn" class="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl transition text-xs">Anladım</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Hidden Audio Elements for Squelch and Roger Sound Effects -->
+  <script>
+    // ==========================================
+    // AUDIO ENGINE & PROCEDURAL TACTICAL SOUNDS
+    // ==========================================
+    class SoundFX {
+      constructor() {
+        this.ctx = null;
+      }
+
+      init() {
+        if (!this.ctx) {
+          const AudioContext = window.AudioContext || window.webkitAudioContext;
+          this.ctx = new AudioContext();
+        }
+        if (this.ctx.state === 'suspended') {
+          this.ctx.resume();
+        }
+      }
+
+      // Mic key-up chirp sound (classic military walkie talkie click)
+      playPttDown() {
+        this.init();
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(800, now);
+        osc.frequency.exponentialRampToValueAtTime(1400, now + 0.04);
+
+        gain.gain.setValueAtTime(0.25, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.045);
+
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+
+        osc.start(now);
+        osc.stop(now + 0.05);
+
+        // Tactile vibration on mobile
+        if ('vibrate' in navigator) {
+          navigator.vibrate(40);
+        }
+      }
+
+      // Roger Beep & Squelch Tail (classic NASA / Police 2-tone burst + noise squelch)
+      playRogerBeep() {
+        this.init();
+        const now = this.ctx.currentTime;
+
+        // Tone 1: 1000Hz (60ms)
+        const osc1 = this.ctx.createOscillator();
+        const gain1 = this.ctx.createGain();
+        osc1.type = 'sine';
+        osc1.frequency.setValueAtTime(1020, now);
+        gain1.gain.setValueAtTime(0.3, now);
+        gain1.gain.setValueAtTime(0.3, now + 0.06);
+        gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.07);
+        osc1.connect(gain1);
+        gain1.connect(this.ctx.destination);
+        osc1.start(now);
+        osc1.stop(now + 0.07);
+
+        // Tone 2: 1480Hz (70ms)
+        const osc2 = this.ctx.createOscillator();
+        const gain2 = this.ctx.createGain();
+        osc2.type = 'sine';
+        osc2.frequency.setValueAtTime(1480, now + 0.07);
+        gain2.gain.setValueAtTime(0.3, now + 0.07);
+        gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
+        osc2.connect(gain2);
+        gain2.connect(this.ctx.destination);
+        osc2.start(now + 0.07);
+        osc2.stop(now + 0.16);
+
+        // Squelch static burst (filtered white noise)
+        this.playSquelchBurst(now + 0.16, 0.12);
+
+        // Tactile vibration on mobile
+        if ('vibrate' in navigator) {
+          navigator.vibrate([30, 40, 60]);
+        }
+      }
+
+      playSquelchBurst(startTime, duration) {
+        const bufferSize = this.ctx.sampleRate * duration;
+        const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+        const output = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+          output[i] = Math.random() * 2 - 1;
+        }
+
+        const whiteNoise = this.ctx.createBufferSource();
+        whiteNoise.buffer = buffer;
+
+        // Bandpass filter to make it sound like genuine radio noise
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'bandpass';
+        filter.frequency.value = 1800;
+        filter.Q.value = 1.2;
+
+        const gain = this.ctx.createGain();
+        gain.gain.setValueAtTime(0.2, startTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
+
+        whiteNoise.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.ctx.destination);
+
+        whiteNoise.start(startTime);
+        whiteNoise.stop(startTime + duration);
+      }
+
+      playFloorDenied() {
+        this.init();
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(220, now);
+        osc.frequency.setValueAtTime(160, now + 0.08);
+
+        gain.gain.setValueAtTime(0.25, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.18);
+
+        if ('vibrate' in navigator) {
+          navigator.vibrate(120);
+        }
+      }
+    }
+
+    const sound = new SoundFX();
+
+    // ==========================================
+    // CORE APPLICATION STATE & LOGIC
+    // ==========================================
+    const state = {
+      peerId: 'peer_' + Math.random().toString(36).substring(2, 9),
+      username: '',
+      roomCode: '',
+      connected: false,
+      isTransmitting: false,
+      currentSpeaker: null, // null | { id: string, name: string }
+      localStream: null,
+      audioTrack: null,
+      audioCtx: null,
+      analyser: null,
+      dataArray: null,
+      mediaStreamSource: null,
+      safetyTimeout: null,
+      peers: new Map(), // peerId -> { name: string, pc: RTCPeerConnection, audioEl: HTMLAudioElement }
+      bus: null // BroadcastChannel for LAN simulation across tabs & mesh
+    };
+
+    // DOM Elements
+    const joinCard = document.getElementById('join-card');
+    const talkieCard = document.getElementById('talkie-card');
+    const usernameInput = document.getElementById('username-input');
+    const roomInput = document.getElementById('room-input');
+    const btnConnect = document.getElementById('btn-connect');
+    const quickGenBtn = document.getElementById('quick-gen-btn');
+    const pttButton = document.getElementById('ptt-button');
+    const pttMicIcon = document.getElementById('ptt-mic-icon');
+    const pttMicIconBg = document.getElementById('ptt-mic-icon-bg');
+    const pttMainLabel = document.getElementById('ptt-main-label');
+    const pttSubLabel = document.getElementById('ptt-sub-label');
+    const pttRipple = document.getElementById('ptt-ripple');
+    const speakerStatusBox = document.getElementById('speaker-status-box');
+    const transmissionTitle = document.getElementById('transmission-title');
+    const transmissionSubtitle = document.getElementById('transmission-subtitle');
+    const speakerIconWrap = document.getElementById('speaker-icon-wrap');
+    const radioSignalIcon = document.getElementById('radio-signal-icon');
+    const radioModeLabel = document.getElementById('radio-mode-label');
+    const pttTimeoutBarWrap = document.getElementById('ptt-timeout-bar-wrap');
+    const pttTimeoutBar = document.getElementById('ptt-timeout-bar');
+    const activeChannelTag = document.getElementById('active-channel-tag');
+    const displayUsername = document.getElementById('display-username');
+    const activeUserCount = document.getElementById('active-user-count');
+    const peerCountBadge = document.getElementById('peer-count-badge');
+    const participantsList = document.getElementById('participants-list');
+    const copyRoomBtn = document.getElementById('copy-room-btn');
+    const leaveRoomBtn = document.getElementById('leave-room-btn');
+    const visualizerCanvas = document.getElementById('audio-visualizer');
+    const canvasCtx = visualizerCanvas.getContext('2d');
+    const guideModal = document.getElementById('guide-modal');
+    const serverGuideBtn = document.getElementById('server-guide-btn');
+    const closeGuideBtn = document.getElementById('close-guide-btn');
+    const modalOkBtn = document.getElementById('modal-ok-btn');
+
+    // Random Call-sign Generator
+    const callSigns = ['Alfa-1', 'Bravo-2', 'Kartal-5', 'Saha-9', 'Yankı-3', 'Kurt-7', 'Delta-4', 'Gölge-8'];
+    usernameInput.value = callSigns[Math.floor(Math.random() * callSigns.length)];
+
+    quickGenBtn.addEventListener('click', () => {
+      const code = 'CH-' + Math.floor(100 + Math.random() * 900);
+      roomInput.value = code;
+    });
+
+    // ==========================================
+    // AUDIO CAPTURE (getUserMedia) & VISUALIZER
+    // ==========================================
+    async function setupMicrophone() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+            sampleRate: 48000
+          },
+          video: false
+        });
+
+        state.localStream = stream;
+        state.audioTrack = stream.getAudioTracks()[0];
+        // Keep mic track strictly disabled until user presses PTT!
+        state.audioTrack.enabled = false;
+
+        // Web Audio Analyser for VU Meter
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        state.audioCtx = new AudioContext();
+        state.analyser = state.audioCtx.createAnalyser();
+        state.analyser.fftSize = 64;
+        state.mediaStreamSource = state.audioCtx.createMediaStreamSource(stream);
+        state.mediaStreamSource.connect(state.analyser);
+        // Notice: do NOT connect to audioCtx.destination here (otherwise local mic loops to own speaker)
+
+        state.dataArray = new Uint8Array(state.analyser.frequencyBinCount);
+        requestAnimationFrame(drawVisualizer);
+        return true;
+      } catch (err) {
+        console.error('Mikrofon erişim hatası:', err);
+        alert('Mikrofon erişimi sağlanamadı!\nLütfen tarayıcı izinlerinden mikrofona onay verin.\n\nHata: ' + err.message);
+        return false;
+      }
+    }
+
+    function drawVisualizer() {
+      requestAnimationFrame(drawVisualizer);
+      if (!canvasCtx) return;
+
+      const width = visualizerCanvas.width;
+      const height = visualizerCanvas.height;
+      canvasCtx.clearRect(0, 0, width, height);
+
+      if (!state.analyser || (!state.isTransmitting && !state.currentSpeaker)) {
+        // Draw standby line
+        canvasCtx.lineWidth = 1;
+        canvasCtx.strokeStyle = 'rgba(75, 85, 99, 0.4)';
+        canvasCtx.beginPath();
+        canvasCtx.moveTo(0, height / 2);
+        canvasCtx.lineTo(width, height / 2);
+        canvasCtx.stroke();
+        return;
+      }
+
+      state.analyser.getByteFrequencyData(state.dataArray);
+
+      const barWidth = (width / state.dataArray.length) * 1.5;
+      let x = 0;
+
+      for (let i = 0; i < state.dataArray.length; i++) {
+        const v = state.dataArray[i] / 255.0;
+        const barHeight = v * (height * 0.85);
+
+        if (state.isTransmitting) {
+          canvasCtx.fillStyle = `rgba(239, 68, 68, ${0.4 + v * 0.6})`;
+        } else {
+          canvasCtx.fillStyle = `rgba(16, 185, 129, ${0.4 + v * 0.6})`;
+        }
+
+        canvasCtx.fillRect(x, height / 2 - barHeight / 2, barWidth - 2, barHeight);
+        x += barWidth;
+      }
+    }
+
+    // ==========================================
+    // P2P WEBRTC MESH & BROADCAST CHANNEL BUS
+    // ==========================================
+    function initMeshSignaling() {
+      // BroadcastChannel connects tabs/windows directly with zero-latency
+      state.bus = new BroadcastChannel(`lan_talk_${state.roomCode}`);
+
+      state.bus.onmessage = async (event) => {
+        const msg = event.data;
+        if (!msg || msg.senderId === state.peerId) return;
+
+        switch (msg.type) {
+          case 'PEER_JOIN':
+            // New peer announced presence
+            state.peers.set(msg.senderId, { name: msg.username });
+            renderRoster();
+            // Send back acknowledge so new peer knows we exist
+            sendSignal({ type: 'PEER_ACK', username: state.username, targetId: msg.senderId });
+            setupPeerConnection(msg.senderId, true);
+            break;
+
+          case 'PEER_ACK':
+            if (msg.targetId === state.peerId) {
+              state.peers.set(msg.senderId, { name: msg.username });
+              renderRoster();
+              setupPeerConnection(msg.senderId, false);
+            }
+            break;
+
+          case 'PEER_LEAVE':
+            cleanupPeer(msg.senderId);
+            if (state.currentSpeaker && state.currentSpeaker.id === msg.senderId) {
+              handleSpeakerReleased();
+            }
+            break;
+
+          case 'FLOOR_REQUEST':
+            // If we are currently holding the floor, reject their request
+            if (state.isTransmitting) {
+              sendSignal({ type: 'FLOOR_COLLISION', targetId: msg.senderId });
+            }
+            break;
+
+          case 'TALK_START':
+            // Someone else began transmitting
+            state.currentSpeaker = { id: msg.senderId, name: msg.username };
+            updateUiReceiving();
+            break;
+
+          case 'TALK_STOP':
+            // Remote speaker released floor
+            if (state.currentSpeaker && state.currentSpeaker.id === msg.senderId) {
+              handleSpeakerReleased();
+            }
+            break;
+
+          case 'FLOOR_COLLISION':
+            // We were transmitting or requesting, but collision was detected
+            if (msg.targetId === state.peerId && state.isTransmitting) {
+              stopTransmission(true); // force release
+              sound.playFloorDenied();
+            }
+            break;
+
+          // WebRTC Signaling packets
+          case 'RTC_OFFER':
+            if (msg.targetId === state.peerId) {
+              handleRtcOffer(msg.senderId, msg.sdp);
+            }
+            break;
+
+          case 'RTC_ANSWER':
+            if (msg.targetId === state.peerId) {
+              handleRtcAnswer(msg.senderId, msg.sdp);
+            }
+            break;
+
+          case 'RTC_ICE':
+            if (msg.targetId === state.peerId) {
+              handleRtcIce(msg.senderId, msg.candidate);
+            }
+            break;
+        }
+      };
+
+      // Announce self
+      sendSignal({ type: 'PEER_JOIN', username: state.username });
+    }
+
+    function sendSignal(data) {
+      if (!state.bus) return;
+      state.bus.postMessage({
+        senderId: state.peerId,
+        ...data
+      });
+    }
+
+    // WebRTC Peer Connection Setup
+    async function setupPeerConnection(targetPeerId, isInitiator) {
+      if (state.peers.has(targetPeerId) && state.peers.get(targetPeerId).pc) {
+        return; // already connected
+      }
+
+      const pc = new RTCPeerConnection({
+        iceServers: [] // Zero-STUN offline LAN configuration
+      });
+
+      // Add local audio track
+      if (state.localStream) {
+        state.localStream.getTracks().forEach(track => pc.addTrack(track, state.localStream));
+      }
+
+      // Handle receiving remote audio
+      const audioEl = new Audio();
+      audioEl.autoplay = true;
+
+      pc.ontrack = (event) => {
+        audioEl.srcObject = event.streams[0];
+      };
+
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          sendSignal({
+            type: 'RTC_ICE',
+            targetId: targetPeerId,
+            candidate: event.candidate
+          });
+        }
+      };
+
+      const peerData = state.peers.get(targetPeerId) || { name: 'Kullanıcı' };
+      peerData.pc = pc;
+      peerData.audioEl = audioEl;
+      state.peers.set(targetPeerId, peerData);
+
+      if (isInitiator) {
+        try {
+          const offer = await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          sendSignal({
+            type: 'RTC_OFFER',
+            targetId: targetPeerId,
+            sdp: pc.localDescription
+          });
+        } catch (e) {
+          console.warn('WebRTC offer error:', e);
+        }
+      }
+    }
+
+    async function handleRtcOffer(senderId, sdp) {
+      let peer = state.peers.get(senderId);
+      if (!peer || !peer.pc) {
+        await setupPeerConnection(senderId, false);
+        peer = state.peers.get(senderId);
+      }
+      try {
+        await peer.pc.setRemoteDescription(new RTCSessionDescription(sdp));
+        const answer = await peer.pc.createAnswer();
+        await peer.pc.setLocalDescription(answer);
+        sendSignal({
+          type: 'RTC_ANSWER',
+          targetId: senderId,
+          sdp: peer.pc.localDescription
+        });
+      } catch (e) {
+        console.warn('WebRTC answer error:', e);
+      }
+    }
+
+    async function handleRtcAnswer(senderId, sdp) {
+      const peer = state.peers.get(senderId);
+      if (peer && peer.pc) {
+        try {
+          await peer.pc.setRemoteDescription(new RTCSessionDescription(sdp));
+        } catch (e) {
+          console.warn('Remote description error:', e);
+        }
+      }
+    }
+
+    async function handleRtcIce(senderId, candidate) {
+      const peer = state.peers.get(senderId);
+      if (peer && peer.pc) {
+        try {
+          await peer.pc.addIceCandidate(new RTCIceCandidate(candidate));
+        } catch (e) {
+          console.warn('ICE add error:', e);
+        }
+      }
+    }
+
+    function cleanupPeer(peerId) {
+      const peer = state.peers.get(peerId);
+      if (peer) {
+        if (peer.pc) peer.pc.close();
+        if (peer.audioEl) peer.audioEl.srcObject = null;
+        state.peers.delete(peerId);
+      }
+      renderRoster();
+    }
+
+    // ==========================================
+    // PUSH-TO-TALK (PTT) STATE MACHINE
+    // ==========================================
+    async function startTransmission() {
+      if (!state.connected || state.isTransmitting) return;
+
+      // Check if channel is occupied by someone else
+      if (state.currentSpeaker && state.currentSpeaker.id !== state.peerId) {
+        sound.playFloorDenied();
+        return;
+      }
+
+      state.isTransmitting = true;
+      state.currentSpeaker = { id: state.peerId, name: state.username };
+
+      // Enable microphone hardware track
+      if (state.audioTrack) {
+        state.audioTrack.enabled = true;
+      }
+
+      // Play tactical audio chirp
+      sound.playPttDown();
+
+      // Broadcast floor capture to all peers
+      sendSignal({ type: 'TALK_START', username: state.username });
+
+      // Update UI
+      updateUiTransmitting();
+
+      // 15-second stuck mic safety timeout (auto release)
+      clearTimeout(state.safetyTimeout);
+      let timeLeft = 15;
+      pttTimeoutBarWrap.classList.remove('opacity-0');
+      pttTimeoutBar.style.width = '100%';
+
+      const countdownInterval = setInterval(() => {
+        if (!state.isTransmitting) {
+          clearInterval(countdownInterval);
+          return;
+        }
+        timeLeft -= 0.1;
+        const pct = Math.max(0, (timeLeft / 15) * 100);
+        pttTimeoutBar.style.width = pct + '%';
+      }, 100);
+
+      state.safetyTimeout = setTimeout(() => {
+        if (state.isTransmitting) {
+          clearInterval(countdownInterval);
+          stopTransmission(true);
+        }
+      }, 15000);
+    }
+
+    function stopTransmission(forced = false) {
+      if (!state.isTransmitting) return;
+
+      state.isTransmitting = false;
+      clearTimeout(state.safetyTimeout);
+      pttTimeoutBarWrap.classList.add('opacity-0');
+
+      // Mute microphone hardware track immediately!
+      if (state.audioTrack) {
+        state.audioTrack.enabled = false;
+      }
+
+      // Broadcast floor released
+      sendSignal({ type: 'TALK_STOP' });
+
+      // Play NASA/military roger-beep + squelch sound
+      sound.playRogerBeep();
+
+      state.currentSpeaker = null;
+      updateUiStandby();
+    }
+
+    function handleSpeakerReleased() {
+      state.currentSpeaker = null;
+      sound.playRogerBeep();
+      updateUiStandby();
+    }
+
+    // ==========================================
+    // UI UPDATES & RENDERERS
+    // ==========================================
+    function updateUiStandby() {
+      pttButton.className = 'relative w-56 h-56 sm:w-64 sm:h-64 rounded-full bg-gradient-to-b from-tactical-700 to-tactical-800 border-4 border-emerald-500/60 ptt-glow-ready transition-all duration-150 flex flex-col items-center justify-center text-white active:scale-95 cursor-pointer shadow-2xl focus:outline-none select-none touch-none';
+      pttMicIcon.className = 'w-8 h-8 sm:w-10 sm:h-10 text-emerald-400';
+      pttMicIconBg.className = 'w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-tactical-900 border border-emerald-500/40 flex items-center justify-center shadow-inner';
+      pttMainLabel.textContent = 'BAS-KONUŞ';
+      pttMainLabel.className = 'block font-black text-sm sm:text-base tracking-widest uppercase text-slate-100';
+      pttSubLabel.textContent = 'Basılı Tutun';
+      pttRipple.classList.add('opacity-0');
+
+      speakerIconWrap.className = 'w-12 h-12 rounded-full mx-auto mb-2 flex items-center justify-center bg-tactical-800 text-emerald-400 border border-tactical-700';
+      speakerIconWrap.innerHTML = '<i data-lucide="radio" class="w-6 h-6"></i>';
+      transmissionTitle.textContent = 'FREKANS SAKİN';
+      transmissionTitle.className = 'text-sm font-black tracking-widest uppercase text-slate-300';
+      transmissionSubtitle.textContent = 'Konuşmak için butona basılı tutun';
+
+      radioModeLabel.textContent = 'STANDBY';
+      radioModeLabel.className = 'text-[11px] font-mono uppercase font-bold text-slate-300';
+      radioSignalIcon.className = 'text-emerald-400';
+
+      lucide.createIcons();
+      renderRoster();
+    }
+
+    function updateUiTransmitting() {
+      pttButton.className = 'relative w-56 h-56 sm:w-64 sm:h-64 rounded-full bg-gradient-to-b from-rose-700 to-red-900 border-4 border-rose-400 ptt-glow-active transition-all duration-150 flex flex-col items-center justify-center text-white active:scale-95 cursor-pointer shadow-2xl focus:outline-none select-none touch-none';
+      pttMicIcon.className = 'w-8 h-8 sm:w-10 sm:h-10 text-white animate-pulse';
+      pttMicIconBg.className = 'w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-rose-950 border border-rose-400 flex items-center justify-center shadow-inner';
+      pttMainLabel.textContent = 'CANLI YAYINDA';
+      pttMainLabel.className = 'block font-black text-sm sm:text-base tracking-widest uppercase text-white';
+      pttSubLabel.textContent = 'Konuşuyorsunuz...';
+      pttRipple.classList.remove('opacity-0');
+
+      speakerIconWrap.className = 'w-12 h-12 rounded-full mx-auto mb-2 flex items-center justify-center bg-rose-600 text-white animate-pulse shadow-lg shadow-rose-600/40 border border-rose-300';
+      speakerIconWrap.innerHTML = '<i data-lucide="mic" class="w-6 h-6"></i>';
+      transmissionTitle.textContent = 'SESİNİZ İLETİLİYOR';
+      transmissionTitle.className = 'text-sm font-black tracking-widest uppercase text-rose-400';
+      transmissionSubtitle.textContent = 'Tüm cihazlar sizi duyuyor (Bırak: Kes)';
+
+      radioModeLabel.textContent = 'YAYIN (TX)';
+      radioModeLabel.className = 'text-[11px] font-mono uppercase font-bold text-rose-400 animate-pulse';
+      radioSignalIcon.className = 'text-rose-400';
+
+      lucide.createIcons();
+      renderRoster();
+    }
+
+    function updateUiReceiving() {
+      pttButton.className = 'relative w-56 h-56 sm:w-64 sm:h-64 rounded-full bg-gradient-to-b from-tactical-800 to-tactical-900 border-4 border-amber-500/40 ptt-glow-busy opacity-85 cursor-not-allowed flex flex-col items-center justify-center text-white select-none touch-none';
+      pttMicIcon.className = 'w-8 h-8 sm:w-10 sm:h-10 text-amber-400';
+      pttMicIconBg.className = 'w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-tactical-900 border border-amber-500/40 flex items-center justify-center';
+      pttMainLabel.textContent = 'KANAL MEŞGUL';
+      pttMainLabel.className = 'block font-black text-sm sm:text-base tracking-widest uppercase text-amber-400';
+      pttSubLabel.textContent = (state.currentSpeaker ? state.currentSpeaker.name : 'Başkası') + ' Konuşuyor';
+      pttRipple.classList.add('opacity-0');
+
+      speakerIconWrap.className = 'w-12 h-12 rounded-full mx-auto mb-2 flex items-center justify-center bg-amber-500/20 text-amber-400 border border-amber-500/40 animate-pulse';
+      speakerIconWrap.innerHTML = '<i data-lucide="volume-2" class="w-6 h-6"></i>';
+      transmissionTitle.textContent = 'DİNLENİYOR: ' + (state.currentSpeaker ? state.currentSpeaker.name : 'Bilinmeyen');
+      transmissionTitle.className = 'text-sm font-black tracking-widest uppercase text-amber-400';
+      transmissionSubtitle.textContent = 'Frekans kilitlendi, bitmesi bekleniyor';
+
+      radioModeLabel.textContent = 'ALICI (RX)';
+      radioModeLabel.className = 'text-[11px] font-mono uppercase font-bold text-amber-400 animate-pulse';
+      radioSignalIcon.className = 'text-amber-400';
+
+      lucide.createIcons();
+      renderRoster();
+    }
+
+    function renderRoster() {
+      const totalCount = state.peers.size + 1; // +1 for self
+      activeUserCount.textContent = `${totalCount} Katılımcı`;
+      peerCountBadge.textContent = `${totalCount} Cihaz Frekansta`;
+
+      participantsList.innerHTML = '';
+
+      // Add self card
+      const selfCard = document.createElement('div');
+      selfCard.className = `flex items-center justify-between p-2.5 rounded-xl border text-xs font-medium transition ${
+        state.isTransmitting
+          ? 'bg-rose-950/40 border-rose-500/50 text-rose-200'
+          : 'bg-tactical-900/90 border-tactical-700/80 text-slate-200'
+      }`;
+      selfCard.innerHTML = `
+        <div class="flex items-center gap-2">
+          <span class="w-2.5 h-2.5 rounded-full ${state.isTransmitting ? 'bg-rose-500 animate-ping' : 'bg-emerald-400'}"></span>
+          <span class="font-bold">${state.username}</span>
+          <span class="text-[10px] uppercase font-mono px-1 rounded bg-tactical-700/60 text-slate-400">SEN</span>
+        </div>
+        <span class="text-[10px] font-mono text-slate-400">${state.isTransmitting ? 'TX [Konuşuyor]' : 'Hazır'}</span>
+      `;
+      participantsList.appendChild(selfCard);
+
+      // Add other peers
+      state.peers.forEach((peer, id) => {
+        const isSpeaking = state.currentSpeaker && state.currentSpeaker.id === id;
+        const card = document.createElement('div');
+        card.className = `flex items-center justify-between p-2.5 rounded-xl border text-xs font-medium transition ${
+          isSpeaking
+            ? 'bg-amber-950/40 border-amber-500/50 text-amber-200'
+            : 'bg-tactical-900/60 border-tactical-700/60 text-slate-300'
+        }`;
+        card.innerHTML = `
+          <div class="flex items-center gap-2">
+            <span class="w-2.5 h-2.5 rounded-full ${isSpeaking ? 'bg-amber-400 animate-ping' : 'bg-emerald-400/70'}"></span>
+            <span class="font-semibold">${peer.name || 'Kullanıcı'}</span>
+          </div>
+          <span class="text-[10px] font-mono text-slate-400">${isSpeaking ? 'RX [Konuşuyor]' : 'Dinliyor'}</span>
+        `;
+        participantsList.appendChild(card);
+      });
+    }
+
+    // ==========================================
+    // ROOM JOIN & LEAVE
+    // ==========================================
+    btnConnect.addEventListener('click', async () => {
+      const u = usernameInput.value.trim();
+      const r = roomInput.value.trim().toUpperCase();
+
+      if (!u || !r) {
+        alert('Lütfen kullanıcı adı ve oda kodu girin!');
+        return;
+      }
+
+      sound.init(); // unlock audio context
+
+      btnConnect.disabled = true;
+      btnConnect.innerHTML = '<span class="inline-block animate-spin mr-2">⏳</span> Mikrofon Başlatılıyor...';
+
+      const micOk = await setupMicrophone();
+      if (!micOk) {
+        btnConnect.disabled = false;
+        btnConnect.innerHTML = '<i data-lucide="mic" class="w-5 h-5"></i><span>Frekansa Katıl (Mikrofonu Aç)</span>';
+        lucide.createIcons();
+        return;
+      }
+
+      state.username = u;
+      state.roomCode = r;
+      state.connected = true;
+
+      // Update room tags
+      activeChannelTag.textContent = r;
+      displayUsername.textContent = u;
+
+      // Switch views
+      joinCard.classList.add('hidden');
+      talkieCard.classList.remove('hidden');
+      talkieCard.classList.add('flex');
+      leaveRoomBtn.classList.remove('hidden');
+      leaveRoomBtn.classList.add('flex');
+
+      initMeshSignaling();
+      updateUiStandby();
+      sound.playRogerBeep();
+    });
+
+    leaveRoomBtn.addEventListener('click', () => {
+      if (!confirm('Telsiz frekansından ayrılmak istiyor musunuz?')) return;
+
+      if (state.isTransmitting) {
+        stopTransmission(true);
+      }
+
+      // Send leave packet
+      sendSignal({ type: 'PEER_LEAVE' });
+
+      // Close all peer connections
+      state.peers.forEach((peer) => {
+        if (peer.pc) peer.pc.close();
+      });
+      state.peers.clear();
+
+      // Stop mic tracks
+      if (state.localStream) {
+        state.localStream.getTracks().forEach(t => t.stop());
+      }
+
+      if (state.bus) {
+        state.bus.close();
+        state.bus = null;
+      }
+
+      state.connected = false;
+
+      // Reset view
+      talkieCard.classList.add('hidden');
+      talkieCard.classList.remove('flex');
+      leaveRoomBtn.classList.add('hidden');
+      joinCard.classList.remove('hidden');
+      btnConnect.disabled = false;
+      btnConnect.innerHTML = '<i data-lucide="mic" class="w-5 h-5"></i><span>Frekansa Katıl (Mikrofonu Aç)</span>';
+      lucide.createIcons();
+    });
+
+    copyRoomBtn.addEventListener('click', () => {
+      navigator.clipboard.writeText(state.roomCode).then(() => {
+        const orig = activeChannelTag.textContent;
+        activeChannelTag.textContent = 'KOPYALANDI!';
+        setTimeout(() => { activeChannelTag.textContent = orig; }, 1200);
+      });
+    });
+
+    // ==========================================
+    // PTT INPUT EVENT LISTENERS (Touch, Mouse, Space)
+    // ==========================================
+    // Pointerdown / Pointerup handle both mobile touch and desktop mouse flawlessly
+    pttButton.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      pttButton.setPointerCapture(e.pointerId);
+      startTransmission();
+    });
+
+    pttButton.addEventListener('pointerup', (e) => {
+      e.preventDefault();
+      try { pttButton.releasePointerCapture(e.pointerId); } catch(err){}
+      stopTransmission();
+    });
+
+    pttButton.addEventListener('pointercancel', (e) => {
+      stopTransmission();
+    });
+
+    pttButton.addEventListener('contextmenu', (e) => e.preventDefault());
+
+    // Window blur safety: release PTT if user Alt+Tabs or loses focus
+    window.addEventListener('blur', () => {
+      if (state.isTransmitting) {
+        stopTransmission();
+      }
+    });
+
+    // Keyboard Spacebar PTT shortcut
+    let spacePressed = false;
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'Space' && !spacePressed) {
+        // Do not trigger PTT if typing inside an input field
+        const tag = document.activeElement ? document.activeElement.tagName : '';
+        if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+
+        e.preventDefault();
+        spacePressed = true;
+        startTransmission();
+      }
+    });
+
+    window.addEventListener('keyup', (e) => {
+      if (e.code === 'Space' && spacePressed) {
+        e.preventDefault();
+        spacePressed = false;
+        stopTransmission();
+      }
+    });
+
+    // Clean exit on tab close
+    window.addEventListener('beforeunload', () => {
+      if (state.connected) {
+        sendSignal({ type: 'PEER_LEAVE' });
+      }
+    });
+
+    // ==========================================
+    // MODAL HANDLERS
+    // ==========================================
+    serverGuideBtn.addEventListener('click', () => {
+      guideModal.classList.remove('hidden');
+      guideModal.classList.add('flex');
+    });
+
+    const closeModal = () => {
+      guideModal.classList.add('hidden');
+      guideModal.classList.remove('flex');
+    };
+
+    closeGuideBtn.addEventListener('click', closeModal);
+    modalOkBtn.addEventListener('click', closeModal);
+    guideModal.addEventListener('click', (e) => {
+      if (e.target === guideModal) closeModal();
+    });
+
+    // Initialize Lucide icons on load
+    lucide.createIcons();
+  </script>
+</body>
+</html>
