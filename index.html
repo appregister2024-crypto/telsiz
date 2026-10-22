@@ -95,6 +95,7 @@
     <div style="min-width:0">
       <div class="room-name" id="roomTitle">Oda</div>
       <div class="sub"><span class="dot" id="statusDot"></span><span id="status">Bağlanıyor…</span></div>
+      <div class="sub" id="dbg" style="font-size:11px"></div>
     </div>
     <button id="leave" class="btn ghost">Çıkış / Oda değiştir</button>
   </header>
@@ -116,6 +117,17 @@ import { joinRoom } from 'https://esm.run/trystero@0.21/torrent';
 // Kendi projen için bu değeri benzersiz bir şeyle değiştir (farklı uygulamalarla karışmasın).
 const APP_ID = 'telsiz-walkie-talkie-7c41e9';
 const LS_KEY = 'telsiz.session.v1';
+
+// Farklı ağlardaki (ör. mobil veri + Wi-Fi) telefonların bağlanabilmesi için TURN röle sunucusu gerekir.
+// Aşağıdaki herkese açık sunucular ücretsiz ama yoğun/kararsız olabilir.
+// Güvenilir kullanım için metered.ca veya Cloudflare'den ücretsiz kendi TURN anahtarını alıp buraya yaz.
+const ICE_SERVERS = [
+  { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:global.stun.twilio.com:3478'] },
+  { urls: 'turn:openrelay.metered.ca:80',                 username: 'openrelayproject', credential: 'openrelayproject' },
+  { urls: 'turn:openrelay.metered.ca:443',                username: 'openrelayproject', credential: 'openrelayproject' },
+  { urls: 'turn:openrelay.metered.ca:443?transport=tcp',  username: 'openrelayproject', credential: 'openrelayproject' },
+  { urls: 'turns:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
+];
 
 const $ = id => document.getElementById(id);
 const screens = { login: $('login'), room: $('roomScreen') };
@@ -215,7 +227,7 @@ async function enter(name, roomName){
   keepAwake();
   setStatus('Bağlanıyor…');
 
-  room = joinRoom({ appId: APP_ID }, roomName);
+  room = joinRoom({ appId: APP_ID, rtcConfig: { iceServers: ICE_SERVERS } }, roomName);
   const [sendHello, getHello] = room.makeAction('hello');
   const [sendTalkFn, getTalk] = room.makeAction('talk');
   sendTalk = sendTalkFn;
@@ -265,6 +277,23 @@ async function enter(name, roomName){
   $('ptt').disabled = false;
   render();
 }
+
+/* ---------- Tanı (bağlantı durumu) ---------- */
+setInterval(() => {
+  const el = $('dbg');
+  if (!room) { el.textContent = ''; return; }
+  try{
+    const conns = room.getPeers();
+    const ids = Object.keys(conns);
+    if (!ids.length) { el.textContent = 'Eşleşme aranıyor…'; return; }
+    const parts = ids.map(id => {
+      const pc = conns[id];
+      const heard = peers.get(id)?.audio ? 'ses✓' : 'ses✗';
+      return `${peers.get(id)?.name || '?'}: ${pc.iceConnectionState}, ${heard}`;
+    });
+    el.textContent = parts.join(' | ');
+  }catch{ el.textContent = ''; }
+}, 1500);
 
 /* ---------- Çıkış ---------- */
 function leave(){
