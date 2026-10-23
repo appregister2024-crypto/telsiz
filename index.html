@@ -42,6 +42,13 @@
   .btn.ghost{background:transparent;color:var(--txt);border:1px solid var(--line);padding:9px 14px;font-size:14px;font-weight:500}
   #err{color:var(--danger);font-size:14px;min-height:20px}
 
+  /* Kayıtlı Oturum Ekranı (Yenileme sonrası) */
+  #resume{justify-content:center;align-items:center;gap:20px;text-align:center;}
+  #resume h2{margin:0;font-size:24px;}
+  #resume p{color:var(--mut);font-size:15px;margin:0;}
+  .resume-btns{display:flex;gap:10px;width:100%;margin-top:10px;}
+  .resume-btns .btn{flex:1;}
+  
   /* Oda */
   header{display:flex;align-items:center;justify-content:space-between;gap:10px;padding-bottom:12px;border-bottom:1px solid var(--line)}
   .room-name{font-size:20px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -96,7 +103,18 @@
   <input id="room" maxlength="40" autocapitalize="none" autocomplete="off" placeholder="Örn. ekolit">
   <div id="err"></div>
   <button id="join" class="btn">Odaya Gir</button>
-  <p class="sub" style="text-align:center">Bilgiler cihazında saklanır; çıkış yapmadıkça sayfa yenilense de odada kalırsın.</p>
+  <p class="sub" style="text-align:center">Bilgiler cihazında saklanır.</p>
+</section>
+
+<!-- DEVAM EKRANI (Sayfa Yenilendiğinde Çıkar) -->
+<section id="resume" class="screen">
+  <h1>📻 Telsiz</h1>
+  <h2 id="resumeTitle">Odaya geri dönülüyor...</h2>
+  <p>Tarayıcı mikrofona erişim izni için tıklamanı bekliyor.</p>
+  <div class="resume-btns">
+    <button id="resumeJoin" class="btn">Devam Et</button>
+    <button id="resumeCancel" class="btn ghost">Odayı Değiştir</button>
+  </div>
 </section>
 
 <!-- ODA EKRANI -->
@@ -119,18 +137,14 @@
   </div>
 </section>
 
-<!-- Arka planda ses motorunu uyutmayan sessiz medya döngüsü -->
 <audio id="bgSilentAudio" loop playsinline src="data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA"></audio>
 
 <script type="module">
-// Misafir ağlarının güvenlik duvarını aşmak için standart HTTPS Port 443 üzerinden çalışan Nostr sinyalleşmesi
 import { joinRoom } from 'https://esm.run/trystero@0.21/nostr';
 
-// Tüm cihazlarda aynı APP_ID olmalıdır
-const APP_ID = 'telsiz-wiges-port443-stable';
+const APP_ID = 'telsiz-wiges-port443-v3';
 const LS_KEY = 'telsiz.session.wiges';
 
-// AP İzolasyonu ve misafir ağı filtreleri için Port 443 TURN/STUN konfigürasyonu
 const RELAY_URLS = [
   'wss://relay.damus.io',
   'wss://nos.lol',
@@ -147,9 +161,11 @@ const ICE_SERVERS = [
 ];
 
 const $ = id => document.getElementById(id);
-const screens = { login: $('login'), room:$('roomScreen') };
+const screens = { login: $('login'), resume: $('resume'), room: $('roomScreen') };
 function show(name){
-  Object.entries(screens).forEach(([k,el]) => el.classList.toggle('active', k === name));
+  Object.entries(screens).forEach(([k,el]) => {
+    if(el) el.classList.toggle('active', k === name);
+  });
 }
 
 let session = null;
@@ -169,14 +185,13 @@ function saveSession(s){
   try { localStorage.setItem(LS_KEY, JSON.stringify(s)); } catch {}
 }
 
-/* ---------- Arka Planda Dinlemeyi Sürdürme ---------- */
 function enableBackgroundAudio(){
   const silent = $('bgSilentAudio');
   silent.play().catch(() => {});
 
   if ('mediaSession' in navigator) {
     navigator.mediaSession.metadata = new MediaMetadata({
-      title: 'Telsiz Açık (Arka Plan Dinlemede)',
+      title: 'Telsiz Açık (Dinlemede)',
       artist: '#' + (session?.room || 'Oda'),
       album: 'Aktif Telsiz Kanalı'
     });
@@ -184,7 +199,6 @@ function enableBackgroundAudio(){
   }
 }
 
-/* ---------- Ses Efektleri ---------- */
 function beep(freq=880, dur=0.09, vol=0.12){
   try{
     actx = actx || new (window.AudioContext || window.webkitAudioContext)();
@@ -199,7 +213,6 @@ function beep(freq=880, dur=0.09, vol=0.12){
 }
 const vibrate = ms => { try{ navigator.vibrate && navigator.vibrate(ms); }catch{} };
 
-/* ---------- Ekran Kapanmasını Önleme & Görünürlük ---------- */
 async function keepAwake(){
   try{ if ('wakeLock' in navigator && !wakeLock) wakeLock = await navigator.wakeLock.request('screen'); }catch{}
 }
@@ -238,7 +251,6 @@ function render(){
   setStatus(peers.size ? `${peers.size + 1} kişi odada` : 'Odada yalnızsın', true);
 }
 
-/* ---------- Odaya Giriş ---------- */
 async function enter(name, roomName){
   session = { name, room: roomName };
   saveSession(session);
@@ -253,3 +265,199 @@ async function enter(name, roomName){
     micStream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
     });
+  }catch(e){
+    session = null;
+    show('login');
+    $('err').textContent = 'Mikrofon izni alınamadı. Lütfen tarayıcı ayarlarından mikrofona her zaman izin verin.';
+    return;
+  }
+
+  micStream.getAudioTracks().forEach(t => t.enabled = false);
+
+  keepAwake();
+  setStatus('Ağa bağlanıyor…');
+
+  room = joinRoom({
+    appId: APP_ID,
+    relayUrls: RELAY_URLS,
+    rtcConfig: { iceServers: ICE_SERVERS }
+  }, roomName);
+
+  const [sendHello, getHello] = room.makeAction('hello');
+  const [sendTalkFn, getTalk] = room.makeAction('talk');
+  sendTalk = sendTalkFn;
+
+  const ensure = id => {
+    if (!peers.has(id)) peers.set(id, { name: '', talking: false, audio: null });
+    return peers.get(id);
+  };
+
+  room.onPeerJoin(id => {
+    ensure(id);
+    room.addStream(micStream, id);
+    sendHello({ name }, id);
+    render();
+  });
+
+  room.onPeerLeave(id => {
+    const p = peers.get(id);
+    if (p?.audio){ pendingAudio.delete(p.audio); p.audio.srcObject = null; p.audio.remove(); }
+    peers.delete(id);
+    render();
+  });
+
+  room.onPeerStream((stream, id) => {
+    const p = ensure(id);
+    if (p.audio){ p.audio.srcObject = null; p.audio.remove(); }
+    const a = document.createElement('audio');
+    a.autoplay = true; 
+    a.playsInline = true; 
+    a.srcObject = stream;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    p.audio = a;
+
+    a.play().catch(() => {
+      pendingAudio.add(a);
+      $('soundUnlockNotice').style.display = 'block';
+    });
+  });
+
+  getHello((data, id) => {
+    const p = ensure(id);
+    p.name = String(data?.name || '').slice(0, 20) || 'Kullanıcı';
+    render();
+  });
+
+  getTalk((data, id) => {
+    const p = ensure(id);
+    p.talking = !!data;
+    render();
+  });
+
+  $('ptt').disabled = false;
+  render();
+}
+
+setInterval(() => {
+  const el = $('dbg');
+  if (!room) { el.textContent = ''; return; }
+  try{
+    const conns = room.getPeers();
+    const ids = Object.keys(conns);
+    if (!ids.length) { el.textContent = 'Ağ taranıyor (443 WSS)…'; return; }
+    const parts = ids.map(id => {
+      const pc = conns[id];
+      return `${peers.get(id)?.name || 'Kullanıcı'}: ${pc.iceConnectionState || 'ok'}`;
+    });
+    el.textContent = parts.join(' | ');
+  }catch{ el.textContent = ''; }
+}, 2000);
+
+function leave(){
+  stopTalk();
+  try{ room && room.leave(); }catch{}
+  room = null; sendTalk = null;
+  peers.forEach(p => { if (p.audio){ p.audio.srcObject = null; p.audio.remove(); } });
+  peers.clear(); pendingAudio.clear();
+  if (micStream){ micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+  try{ wakeLock && wakeLock.release(); }catch{}
+  wakeLock = null;
+
+  $('bgSilentAudio').pause();
+  if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'none';
+
+  const name = session?.name || '';
+  session = null;
+  try{ localStorage.removeItem(LS_KEY); }catch{}
+  $('name').value = name;
+  $('room').value = '';
+  $('err').textContent = '';
+  $('ptt').disabled = true;
+  show('login');
+}
+
+function startTalk(){
+  if (talking || !room || !micStream) return;
+  talking = true;
+  micStream.getAudioTracks().forEach(t => t.enabled = true);
+  $('ptt').classList.add('on');
+  $('ptt').textContent = 'KONUŞ…';
+  beep(1000, 0.07); vibrate(25);
+  sendTalk && sendTalk(true);
+  render();
+}
+
+function stopTalk(){
+  if (!talking) return;
+  talking = false;
+  micStream && micStream.getAudioTracks().forEach(t => t.enabled = false);
+  $('ptt').classList.remove('on');
+  $('ptt').textContent = 'BAS KONUŞ';
+  beep(620, 0.09); vibrate(15);
+  sendTalk && sendTalk(false);
+  render();
+}
+
+const ptt = $('ptt');
+ptt.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  try{ ptt.setPointerCapture(e.pointerId); }catch{}
+  startTalk();
+});
+['pointerup','pointercancel','lostpointercapture'].forEach(ev =>
+  ptt.addEventListener(ev, e => { e.preventDefault(); stopTalk(); })
+);
+ptt.addEventListener('contextmenu', e => e.preventDefault());
+
+window.addEventListener('keydown', e => {
+  if (e.code === 'Space' && screens.room.classList.contains('active') && !e.repeat){
+    e.preventDefault(); startTalk();
+  }
+});
+window.addEventListener('keyup', e => {
+  if (e.code === 'Space') { e.preventDefault(); stopTalk(); }
+});
+window.addEventListener('blur', stopTalk);
+
+function unlockAudioEngine(){
+  if (actx && actx.state === 'suspended') actx.resume();
+  pendingAudio.forEach(a => a.play().then(() => pendingAudio.delete(a)).catch(() => {}));
+  $('soundUnlockNotice').style.display = 'none';
+}
+window.addEventListener('pointerdown', unlockAudioEngine, { passive: true });
+window.addEventListener('keydown', unlockAudioEngine, { passive: true });
+
+function normRoom(r){ return r.trim().toLowerCase().replace(/\s+/g, '-'); }
+
+$('join').addEventListener('click', () => {
+  const name = $('name').value.trim();
+  const roomName = normRoom($('room').value);
+  if (!name || !roomName){ $('err').textContent = 'Ad ve oda adı gerekli.'; return; }
+  $('err').textContent = '';
+  enter(name, roomName);
+});
+
+$('leave').addEventListener('click', leave);
+
+/* Oturum Kontrolü ve Yönlendirme */
+const saved = loadSession();
+if (saved?.name && saved?.room){
+  // Sayfa ilk yüklendiğinde mikrofona tıklanmadan ulaşılamayacağı için "Devam Ekranı" göster.
+  $('resumeTitle').textContent = `Önceki Oda: #${saved.room}`;
+  show('resume');
+  
+  $('resumeJoin').onclick = () => {
+    enter(saved.name, saved.room);
+  };
+  $('resumeCancel').onclick = () => {
+    $('name').value = saved.name;
+    $('room').value = saved.room;
+    show('login');
+  };
+} else {
+  show('login');
+}
+</script>
+</body>
+</html>
