@@ -8,8 +8,10 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Telsiz</title>
-<!-- Standart ve engelsiz WebRTC altyapısı (PeerJS) -->
-<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+
+<!-- Türkiye'de engelsiz Cloudflare CDN üzerinden PeerJS -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
+
 <style>
   :root{
     --bg:#0f1216; --panel:#181d23; --line:#262d36; --txt:#e8edf2; --mut:#8b97a4;
@@ -45,10 +47,10 @@
   #err{color:var(--danger);font-size:14px;min-height:20px}
 
   /* Devam Ekranı */
-  #resume{justify-content:center;align-items:center;gap:20px;text-align:center;}
+  #resume{justify-content:center;align-items:center;gap:16px;text-align:center;}
   #resume h2{margin:0;font-size:24px;}
   #resume p{color:var(--mut);font-size:15px;margin:0;}
-  .resume-btns{display:flex;gap:10px;width:100%;margin-top:10px;}
+  .resume-btns{display:flex;gap:10px;width:100%;margin-top:14px;}
   .resume-btns .btn{flex:1;}
 
   /* Oda */
@@ -88,14 +90,19 @@
     background:#e67e22;color:#fff;padding:8px 16px;border-radius:20px;font-size:13px;
     z-index:99;box-shadow:0 4px 15px rgba(0,0,0,0.5);pointer-events:none;
   }
+  #globalErrorBox{
+    display:none;position:fixed;top:0;left:0;right:0;background:#c0392b;color:#fff;
+    padding:12px;font-size:13px;z-index:9999;text-align:center;
+  }
 </style>
 </head>
 <body>
 
-<div id="soundUnlockNotice">🔊 Sesi açmak için ekrana bir kez dokunun</div>
+<div id="globalErrorBox"></div>
+<div id="soundUnlockNotice">🔊 Sesi açmak için ekrana 1 kez dokunun</div>
 
-<!-- GİRİŞ EKRANI -->
-<section id="login" class="screen">
+<!-- GİRİŞ EKRANI (Varsayılan olarak 'active', siyah ekran kalması imkansız) -->
+<section id="login" class="screen active">
   <h1>📻 Telsiz</h1>
   <p>Adını ve oda adını yaz. Aynı odadaki herkes seni duyar.</p>
   <label for="name">Adın</label>
@@ -104,17 +111,17 @@
   <input id="room" maxlength="40" autocapitalize="none" autocomplete="off" placeholder="Örn. ekolit">
   <div id="err"></div>
   <button id="join" class="btn">Odaya Gir</button>
-  <p class="sub" style="text-align:center">Bilgiler cihazında saklanır.</p>
+  <p class="sub" style="text-align:center">Bilgiler bu cihazda saklanır.</p>
 </section>
 
 <!-- DEVAM EKRANI (Sayfa Yenilendiğinde Çıkar) -->
 <section id="resume" class="screen">
   <h1>📻 Telsiz</h1>
   <h2 id="resumeTitle">Odaya Dönülüyor...</h2>
-  <p>Mikrofon ve ses bağlantısını aktifleştirmek için devam edin.</p>
+  <p id="resumeDesc">Önceki odana tek tıkla bağlanabilirsin.</p>
   <div class="resume-btns">
-    <button id="resumeJoin" class="btn">Devam Et</button>
-    <button id="resumeCancel" class="btn ghost">Odayı Değiştir</button>
+    <button id="resumeJoin" class="btn">Odaya Bağlan</button>
+    <button id="resumeChange" class="btn ghost">Odayı Değiştir</button>
   </div>
 </section>
 
@@ -141,16 +148,24 @@
 <audio id="bgSilentAudio" loop playsinline src="data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA"></audio>
 
 <script>
-const LS_KEY = 'telsiz.session.peer.v1';
-const MAX_SLOTS = 8; // Bir odada eşzamanlı maksimum 8 kullanıcı
+// Olası hataları doğrudan ekranda gösterme (Siyah ekranda kalmayı önler)
+window.onerror = function(msg, url, line) {
+  const b = document.getElementById('globalErrorBox');
+  if (b) {
+    b.style.display = 'block';
+    b.textContent = 'Hata: ' + msg + ' (Satır ' + line + ')';
+  }
+};
 
-// AP İzolasyonunu aşmak için genel STUN ve TURN röleleri
+const LS_KEY = 'telsiz.session.wiges.v4';
+const MAX_SLOTS = 8;
+
 const ICE_SERVERS = [
-  { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
+  { urls: ['stun:stun.cloudflare.com:3478'] },
   { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
   { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-  { urls: 'turns:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
+  { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
 ];
 
 const $ = id => document.getElementById(id);
@@ -169,7 +184,6 @@ let talking = false;
 let wakeLock = null;
 let actx = null;
 
-// peerId -> { name, talking, audio, conn, call }
 const peers = new Map();
 const pendingAudio = new Set();
 const connectingTargets = new Set();
@@ -182,7 +196,6 @@ function saveSession(s){
   try { localStorage.setItem(LS_KEY, JSON.stringify(s)); } catch {}
 }
 
-/* ---------- Arka Plan Sesi ve Uyanık Tutma ---------- */
 function enableBackgroundAudio(){
   const silent = $('bgSilentAudio');
   silent.play().catch(() => {});
@@ -244,237 +257,4 @@ function render(){
   const now = $('now');
   if (talking) { now.textContent = '🔴 Konuşuyorsun'; now.classList.remove('busy'); }
   else if (speakers.length) { now.textContent = '🔊 ' + speakers.join(', ') + ' konuşuyor…'; now.classList.add('busy'); }
-  else { now.textContent = 'Kanal boş'; now.classList.remove('busy'); }
-
-  setStatus(peers.size ? `${peers.size + 1} kişi odada` : 'Odada yalnızsın', true);
-}
-
-/* ---------- PeerJS Eşleşme Mantığı ---------- */
-function cleanRoomId(r){
-  return r.trim().toLowerCase()
-    .replace(/ı/g, 'i').replace(/ğ/g, 'g').replace(/ü/g, 'u')
-    .replace(/ş/g, 's').replace(/ö/g, 'o').replace(/ç/g, 'c')
-    .replace(/[^a-z0-9_-]/g, '');
-}
-
-function tryClaimSlot(slot = 1) {
-  if (slot > MAX_SLOTS) {
-    setStatus('Oda dolu');
-    $('err').textContent = 'Oda dolu (Maksimum 8 kullanıcı).';
-    show('login');
-    return;
-  }
-
-  const targetId = `telsiz_${session.roomClean}_${slot}`;
-  setStatus(`Kanal bağlanıyor (${slot})…`);
-
-  if (peer) {
-    try { peer.destroy(); } catch(e){}
-  }
-
-  peer = new Peer(targetId, {
-    debug: 1,
-    config: { iceServers: ICE_SERVERS }
-  });
-
-  peer.on('open', id => {
-    myPeerId = id;
-    onSlotClaimed();
-  });
-
-  peer.on('error', err => {
-    if (err.type === 'unavailable-id') {
-      // Slot meşgulse bir sonrakini talep et
-      tryClaimSlot(slot + 1);
-    } else if (err.type === 'peer-unavailable') {
-      // Aranan slot boş, sorun yok
-    } else {
-      console.warn('Peer uyarısı:', err);
-    }
-  });
-}
-
-function onSlotClaimed() {
-  setStatus('Kanal hazır', true);
-  $('ptt').disabled = false;
-  render();
-
-  // Gelen veri hattını kabul et
-  peer.on('connection', conn => {
-    setupDataConnection(conn);
-  });
-
-  // Gelen ses hattını kabul et
-  peer.on('call', call => {
-    setupMediaCall(call, false);
-  });
-
-  scanSlots();
-  if (scanInterval) clearInterval(scanInterval);
-  scanInterval = setInterval(scanSlots, 2500);
-}
-
-// Odayı tara ve diğer slotlara bağlan
-function scanSlots() {
-  if (!peer || peer.destroyed || !myPeerId) return;
-
-  for (let s = 1; s <= MAX_SLOTS; s++) {
-    const targetId = `telsiz_${session.roomClean}_${s}`;
-    if (targetId === myPeerId) continue;
-
-    // Glare (çift bağlantı) önleme: Sadece ID'si büyük olan arar
-    if (myPeerId > targetId && !peers.has(targetId)) {
-      connectToTarget(targetId);
-    }
-  }
-}
-
-function connectToTarget(targetId) {
-  if (connectingTargets.has(targetId) || peers.has(targetId)) return;
-  connectingTargets.add(targetId);
-
-  const conn = peer.connect(targetId, { reliable: true });
-  setupDataConnection(conn);
-
-  const call = peer.call(targetId, micStream);
-  setupMediaCall(call, true);
-
-  setTimeout(() => connectingTargets.delete(targetId), 4000);
-}
-
-function setupDataConnection(conn) {
-  const targetId = conn.peer;
-
-  conn.on('open', () => {
-    connectingTargets.delete(targetId);
-    let p = peers.get(targetId);
-    if (!p) {
-      p = { name: '', talking: false, audio: null, conn, call: null };
-      peers.set(targetId, p);
-    } else {
-      p.conn = conn;
-    }
-    conn.send({ type: 'hello', name: session.name });
-    render();
-  });
-
-  conn.on('data', data => {
-    if (!data || typeof data !== 'object') return;
-    let p = peers.get(targetId);
-    if (!p) {
-      p = { name: '', talking: false, audio: null, conn, call: null };
-      peers.set(targetId, p);
-    }
-
-    if (data.type === 'hello') {
-      p.name = String(data.name || '').slice(0, 20) || 'Kullanıcı';
-      render();
-    } else if (data.type === 'talk') {
-      p.talking = !!data.talking;
-      render();
-    }
-  });
-
-  conn.on('close', () => removePeer(targetId));
-  conn.on('error', () => connectingTargets.delete(targetId));
-}
-
-function setupMediaCall(call, isInitiator) {
-  const targetId = call.peer;
-
-  if (!isInitiator) {
-    call.answer(micStream);
-  }
-
-  call.on('stream', remoteStream => {
-    let p = peers.get(targetId);
-    if (!p) {
-      p = { name: '', talking: false, audio: null, conn: null, call };
-      peers.set(targetId, p);
-    }
-    p.call = call;
-
-    if (p.audio) {
-      p.audio.srcObject = null;
-      p.audio.remove();
-    }
-
-    const a = document.createElement('audio');
-    a.autoplay = true;
-    a.playsInline = true;
-    a.srcObject = remoteStream;
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    p.audio = a;
-
-    a.play().catch(() => {
-      pendingAudio.add(a);
-      $('soundUnlockNotice').style.display = 'block';
-    });
-    render();
-  });
-
-  call.on('close', () => removePeer(targetId));
-  call.on('error', () => connectingTargets.delete(targetId));
-}
-
-function removePeer(targetId) {
-  const p = peers.get(targetId);
-  if (p) {
-    if (p.audio) {
-      pendingAudio.delete(p.audio);
-      p.audio.srcObject = null;
-      p.audio.remove();
-    }
-    try { p.conn && p.conn.close(); } catch(e){}
-    try { p.call && p.call.close(); } catch(e){}
-    peers.delete(targetId);
-    render();
-  }
-}
-
-/* ---------- Odaya Giriş ---------- */
-async function enter(name, rawRoom){
-  const cleanRoom = cleanRoomId(rawRoom);
-  if (!cleanRoom) {
-    $('err').textContent = 'Geçerli bir oda adı girin.';
-    return;
-  }
-
-  session = { name, room: rawRoom, roomClean: cleanRoom };
-  saveSession(session);
-
-  $('roomTitle').textContent = '#' + rawRoom;
-  setStatus('Mikrofon açılıyor…');
-  show('room');
-
-  enableBackgroundAudio();
-
-  try{
-    micStream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
-    });
-  }catch(e){
-    session = null;
-    show('login');
-    $('err').textContent = 'Mikrofon izni alınamadı. Tarayıcı ayarlarından mikrofona her zaman izin verin.';
-    return;
-  }
-
-  // Başlangıçta mikrofon kanalı sessizde tutulur
-  micStream.getAudioTracks().forEach(t => t.enabled = false);
-
-  keepAwake();
-  tryClaimSlot(1);
-}
-
-/* Tanı Durumu */
-setInterval(() => {
-  const el = $('dbg');
-  if (!peer || !myPeerId) { el.textContent = ''; return; }
-  const slotNum = myPeerId.split('_').pop();
-  if (peers.size === 0) {
-    el.textContent = `Kanal açık (Slot #${slotNum}) - Bekleniyor`;
-  } else {
-    const list = [...peers.values()].map(p => p.name || 'Kullanıcı').join(', ');
-    el.textContent
+  else { now.textContent = 'Kanal boş';
