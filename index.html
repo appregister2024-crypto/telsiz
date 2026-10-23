@@ -23,7 +23,6 @@
   .screen{display:none;height:100%;flex-direction:column;max-width:520px;margin:0 auto;padding:20px}
   .screen.active{display:flex}
 
-  /* Giriş */
   #login{justify-content:center;gap:14px}
   #login h1{margin:0 0 4px;font-size:30px;letter-spacing:.5px}
   #login p{margin:0 0 10px;color:var(--mut);font-size:15px}
@@ -42,7 +41,6 @@
   .btn.ghost{background:transparent;color:var(--txt);border:1px solid var(--line);padding:9px 14px;font-size:14px;font-weight:500}
   #err{color:var(--danger);font-size:14px;min-height:22px;line-height:1.4;text-align:center}
 
-  /* Oda */
   header{display:flex;align-items:center;justify-content:space-between;gap:10px;padding-bottom:12px;border-bottom:1px solid var(--line)}
   .room-name{font-size:20px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .sub{font-size:13px;color:var(--mut)}
@@ -90,9 +88,9 @@
   <h1>📻 Telsiz</h1>
   <p>Adını ve oda adını yaz. Aynı odadaki herkes seni duyar.</p>
   <label for="name">Adın</label>
-  <input id="name" maxlength="20" autocomplete="nickname" placeholder="Örn. SPM">
+  <input id="name" maxlength="20" autocomplete="nickname" placeholder="Adınızı girin">
   <label for="room">Oda adı</label>
-  <input id="room" maxlength="40" autocapitalize="none" autocomplete="off" placeholder="Örn. ekolit">
+  <input id="room" maxlength="40" autocapitalize="none" autocomplete="off" placeholder="Oda adını girin">
   <div id="err"></div>
   <button id="join" class="btn">Odaya Gir</button>
   <p class="sub" style="text-align:center">Bilgiler cihazında saklanır.</p>
@@ -121,12 +119,11 @@
 <audio id="bgSilentAudio" loop playsinline src="data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA"></audio>
 
 <script type="module">
-import { joinRoom } from 'https://esm.run/trystero@0.21/torrent';
+import { joinRoom } from 'https://esm.run/trystero@0.21/nostr';
 
 const APP_ID = 'telsiz-wiges-network-v6';
 const LS_KEY = 'telsiz.session.data.v6';
 
-// WIGES2024 ağındaki istemci izolasyonunu (AP Isolation) aşan TURN/STUN konfigürasyonu
 const ICE_SERVERS = [
   { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
   { urls: ['stun:stun.cloudflare.com:3478'] },
@@ -134,6 +131,15 @@ const ICE_SERVERS = [
   { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
   { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
   { urls: 'turns:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
+];
+
+const RELAY_URLS = [
+  'wss://relay.damus.io',
+  'wss://nos.lol',
+  'wss://relay.nostr.band',
+  'wss://relay.primal.net',
+  'wss://nostr.mom',
+  'wss://purplerelay.com'
 ];
 
 const $ = id => document.getElementById(id);
@@ -161,7 +167,6 @@ function saveSession(s){
   try { localStorage.setItem(LS_KEY, JSON.stringify(s)); } catch {}
 }
 
-/* EKOLIT / ekolıt uyuşmazlığını çözen fonksiyon */
 function normalizeRoom(str) {
   if (!str) return '';
   return str.trim()
@@ -245,7 +250,6 @@ function render(){
   setStatus(peers.size ? `${peers.size + 1} kişi odada` : 'Odada yalnızsın', true);
 }
 
-/* Odaya Giriş Fonksiyonu */
 async function enter(name, rawRoom){
   const cleanRoom = normalizeRoom(rawRoom);
   if (!cleanRoom) {
@@ -274,7 +278,6 @@ async function enter(name, rawRoom){
     return;
   }
 
-  // Odayı göster
   show('room');
   micStream.getAudioTracks().forEach(t => t.enabled = false);
 
@@ -284,6 +287,7 @@ async function enter(name, rawRoom){
   try {
     room = joinRoom({
       appId: APP_ID,
+      relayUrls: RELAY_URLS,
       rtcConfig: { iceServers: ICE_SERVERS }
     }, cleanRoom);
 
@@ -457,12 +461,13 @@ $('join').addEventListener('click', () => {
 
 $('leave').addEventListener('click', leave);
 
-/* Açılış: Önceden kayıtlı oda varsa butonu hazırlar */
 const saved = loadSession();
 if (saved?.name && saved?.room){
   $('name').value = saved.name;
   $('room').value = saved.displayRoom || saved.room;
-  $('join').textContent = `Odaya Bağlan (#${saved.room})`;
+  $('join').textContent = `Odaya Bağlan (#${saved.displayRoom || saved.room})`;
+} else {
+  $('join').textContent = 'Odaya Gir';
 }
 </script>
 </body>
