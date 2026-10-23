@@ -6,12 +6,7 @@
 <meta name="theme-color" content="#0f1216">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Telsiz</title>
-
-<!-- Türkiye'de engelsiz Cloudflare CDN üzerinden PeerJS -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
-
 <style>
   :root{
     --bg:#0f1216; --panel:#181d23; --line:#262d36; --txt:#e8edf2; --mut:#8b97a4;
@@ -41,17 +36,11 @@
   input:focus{border-color:var(--accent)}
   .btn{
     padding:15px;font-size:17px;font-weight:600;border:0;border-radius:12px;
-    background:var(--accent);color:#1a1205;cursor:pointer;
+    background:var(--accent);color:#1a1205;cursor:pointer;transition:opacity 0.2s;
   }
+  .btn:disabled{opacity:0.6;cursor:not-allowed}
   .btn.ghost{background:transparent;color:var(--txt);border:1px solid var(--line);padding:9px 14px;font-size:14px;font-weight:500}
-  #err{color:var(--danger);font-size:14px;min-height:20px}
-
-  /* Devam Ekranı */
-  #resume{justify-content:center;align-items:center;gap:16px;text-align:center;}
-  #resume h2{margin:0;font-size:24px;}
-  #resume p{color:var(--mut);font-size:15px;margin:0;}
-  .resume-btns{display:flex;gap:10px;width:100%;margin-top:14px;}
-  .resume-btns .btn{flex:1;}
+  #err{color:var(--danger);font-size:14px;min-height:20px;line-height:1.4}
 
   /* Oda */
   header{display:flex;align-items:center;justify-content:space-between;gap:10px;padding-bottom:12px;border-bottom:1px solid var(--line)}
@@ -90,18 +79,13 @@
     background:#e67e22;color:#fff;padding:8px 16px;border-radius:20px;font-size:13px;
     z-index:99;box-shadow:0 4px 15px rgba(0,0,0,0.5);pointer-events:none;
   }
-  #globalErrorBox{
-    display:none;position:fixed;top:0;left:0;right:0;background:#c0392b;color:#fff;
-    padding:12px;font-size:13px;z-index:9999;text-align:center;
-  }
 </style>
 </head>
 <body>
 
-<div id="globalErrorBox"></div>
 <div id="soundUnlockNotice">🔊 Sesi açmak için ekrana 1 kez dokunun</div>
 
-<!-- GİRİŞ EKRANI (Varsayılan olarak 'active', siyah ekran kalması imkansız) -->
+<!-- GİRİŞ EKRANI -->
 <section id="login" class="screen active">
   <h1>📻 Telsiz</h1>
   <p>Adını ve oda adını yaz. Aynı odadaki herkes seni duyar.</p>
@@ -111,18 +95,7 @@
   <input id="room" maxlength="40" autocapitalize="none" autocomplete="off" placeholder="Örn. ekolit">
   <div id="err"></div>
   <button id="join" class="btn">Odaya Gir</button>
-  <p class="sub" style="text-align:center">Bilgiler bu cihazda saklanır.</p>
-</section>
-
-<!-- DEVAM EKRANI (Sayfa Yenilendiğinde Çıkar) -->
-<section id="resume" class="screen">
-  <h1>📻 Telsiz</h1>
-  <h2 id="resumeTitle">Odaya Dönülüyor...</h2>
-  <p id="resumeDesc">Önceki odana tek tıkla bağlanabilirsin.</p>
-  <div class="resume-btns">
-    <button id="resumeJoin" class="btn">Odaya Bağlan</button>
-    <button id="resumeChange" class="btn ghost">Odayı Değiştir</button>
-  </div>
+  <p class="sub" style="text-align:center">Bilgiler cihazında saklanır.</p>
 </section>
 
 <!-- ODA EKRANI -->
@@ -147,19 +120,14 @@
 
 <audio id="bgSilentAudio" loop playsinline src="data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA"></audio>
 
-<script>
-// Olası hataları doğrudan ekranda gösterme (Siyah ekranda kalmayı önler)
-window.onerror = function(msg, url, line) {
-  const b = document.getElementById('globalErrorBox');
-  if (b) {
-    b.style.display = 'block';
-    b.textContent = 'Hata: ' + msg + ' (Satır ' + line + ')';
-  }
-};
+<script type="module">
+// WIGES2024 misafir ağı güvenlik duvarlarını aşan WSS/Port 443 Nostr motoru
+import { joinRoom } from 'https://esm.run/trystero@0.21/nostr';
 
-const LS_KEY = 'telsiz.session.wiges.v4';
-const MAX_SLOTS = 8;
+const APP_ID = 'telsiz-wiges-network-v5';
+const LS_KEY = 'telsiz.session.data.v5';
 
+// Misafir ağı AP izolasyonunu aşmak için genel STUN ve TURN röleleri
 const ICE_SERVERS = [
   { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] },
   { urls: ['stun:stun.cloudflare.com:3478'] },
@@ -168,93 +136,4 @@ const ICE_SERVERS = [
   { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' }
 ];
 
-const $ = id => document.getElementById(id);
-const screens = { login: $('login'), resume: $('resume'), room:$('roomScreen') };
-function show(name){
-  Object.entries(screens).forEach(([k,el]) => {
-    if (el) el.classList.toggle('active', k === name);
-  });
-}
-
-let session = null;
-let peer = null;
-let myPeerId = null;
-let micStream = null;
-let talking = false;
-let wakeLock = null;
-let actx = null;
-
-const peers = new Map();
-const pendingAudio = new Set();
-const connectingTargets = new Set();
-let scanInterval = null;
-
-function loadSession(){
-  try { return JSON.parse(localStorage.getItem(LS_KEY)) || null; } catch { return null; }
-}
-function saveSession(s){
-  try { localStorage.setItem(LS_KEY, JSON.stringify(s)); } catch {}
-}
-
-function enableBackgroundAudio(){
-  const silent = $('bgSilentAudio');
-  silent.play().catch(() => {});
-
-  if ('mediaSession' in navigator) {
-    navigator.mediaSession.metadata = new MediaMetadata({
-      title: 'Telsiz Açık (Dinlemede)',
-      artist: '#' + (session?.room || 'Oda'),
-      album: 'Aktif Telsiz Kanalı'
-    });
-    navigator.mediaSession.playbackState = 'playing';
-  }
-}
-
-function beep(freq=880, dur=0.09, vol=0.12){
-  try{
-    actx = actx || new (window.AudioContext || window.webkitAudioContext)();
-    if (actx.state === 'suspended') actx.resume();
-    const o = actx.createOscillator(), g = actx.createGain();
-    o.type = 'sine'; o.frequency.value = freq;
-    g.gain.value = vol;
-    g.gain.exponentialRampToValueAtTime(0.0001, actx.currentTime + dur);
-    o.connect(g).connect(actx.destination);
-    o.start(); o.stop(actx.currentTime + dur);
-  }catch{}
-}
-const vibrate = ms => { try{ navigator.vibrate && navigator.vibrate(ms); }catch{} };
-
-async function keepAwake(){
-  try{ if ('wakeLock' in navigator && !wakeLock) wakeLock = await navigator.wakeLock.request('screen'); }catch{}
-}
-
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') {
-    if (peer) keepAwake();
-    if (actx && actx.state === 'suspended') actx.resume();
-  } else {
-    if (talking) stopTalk();
-  }
-});
-
-function setStatus(text, on=false){
-  $('status').textContent = text;
-  $('statusDot').classList.toggle('on', on);
-}
-function chip(text, cls=''){
-  const d = document.createElement('div');
-  d.className = 'chip ' + cls;
-  d.textContent = text;
-  return d;
-}
-function render(){
-  const list = $('peers');
-  list.innerHTML = '';
-  list.appendChild(chip((session?.name || 'Ben') + ' (sen)', 'me' + (talking ? ' talk' : '')));
-  peers.forEach(p => list.appendChild(chip(p.name || 'Kullanıcı', p.talking ? 'talk' : '')));
-
-  const speakers = [...peers.values()].filter(p => p.talking).map(p => p.name || '…');
-  const now = $('now');
-  if (talking) { now.textContent = '🔴 Konuşuyorsun'; now.classList.remove('busy'); }
-  else if (speakers.length) { now.textContent = '🔊 ' + speakers.join(', ') + ' konuşuyor…'; now.classList.add('busy'); }
-  else { now.textContent = 'Kanal boş';
+// Port 443 üzerinden
